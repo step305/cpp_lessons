@@ -60,6 +60,8 @@ int orbDetectorThread() {
 }
 
 int main() {
+    std::cout << "Thread safe app." << std::endl;
+
     std::thread print_thread( printThread );
     std::thread camera_thread( cameraThread );
     std::thread orb_detector_thread( orbDetectorThread );
