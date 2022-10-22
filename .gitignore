@@ -1,0 +1,3 @@
+# Project exclude paths
+/cmake-build-debug-jetson-host/
+/cmake-build-debug-mingw/
