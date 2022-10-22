@@ -58,12 +58,11 @@ namespace circ_fifo {
     template<typename Element, size_t Size>
     bool CircularFifo<Element, Size>::push(const Element& item)
     {
-        const auto current_tail = _tail.load();
-        const auto next_tail = increment(current_tail);
-
         if (blocking) {
+            std::unique_lock<std::mutex> mlock(mutex_);
+            const auto current_tail = _tail.load();
+            const auto next_tail = increment(current_tail);
             if(next_tail != _head.load()) {
-                std::unique_lock<std::mutex> mlock(mutex_);
                 _array[current_tail] = item;
                 _tail.store(next_tail);
                 cond_.notify_one();
@@ -71,6 +70,8 @@ namespace circ_fifo {
             }
             return false;  // full queue
         } else {
+            const auto current_tail = _tail.load();
+            const auto next_tail = increment(current_tail);
             if(next_tail != _head.load()) {
                 _array[current_tail] = item;
                 _tail.store(next_tail);
@@ -84,15 +85,16 @@ namespace circ_fifo {
     template<typename Element, size_t Size>
     bool CircularFifo<Element, Size>::pop(Element& item)
     {
-        const auto current_head = _head.load();
         if (blocking) {
             std::unique_lock<std::mutex> mlock(mutex_);
+            const auto current_head = _head.load();
             while (current_head == _tail.load())
                 cond_.wait(mlock);
             item = _array[current_head];
             _head.store(increment(current_head));
             return true;
         } else {
+            const auto current_head = _head.load();
             if(current_head == _tail.load())
                 return false;   // empty queue
             item = _array[current_head];
