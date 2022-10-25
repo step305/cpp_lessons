@@ -1,86 +1,66 @@
-#include <iostream>
-#include "thread"
-#include <signal.h>
-#include "circular_fifo.h"
-#include <chrono>
-#include "sstream"
+#include "main.h"
+#include "camera_driver.h"
+#include "RealsenseD455.h"
+#include "camera_driver.h"
 
-circ_fifo::CircularFifo <std::string, 100> queuePrint(true);
-std::atomic<bool> quitPrint;
 
-long long unsigned get_us() {
-    return std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now().time_since_epoch()
-    ).count();
+circ_fifo::CircularFifo <ImageMessageStruct, images_queue_len> queueImages(true);
+circ_fifo::CircularFifo <CAMMessageStruct, camera_queue_len> queueCamera(true);
+circ_fifo::CircularFifo <RealsenseIMUMessageStruct, imu_queue_len> queueIMU(true);
+
+std::atomic <bool> quitApp;
+std::atomic <bool> cameraStarted;
+
+Printer::Printer printer = Printer::Printer();
+
+volatile sig_atomic_t exit_flag;
+
+void exit_catch(int sig) {
+    printer.printError("Logger:: User stop requested!");
+    exit_flag = 1;
 }
 
-auto t0 = get_us();
-
-int printThread() {
-    std::string string_to_print;
-    std::cout << "Print thread started!!" << std::endl;
-    while (true) {
-        if (quitPrint) {
-            break;
-        }
-        if (queuePrint.pop(string_to_print)) {
-            std::cout << std::to_string(get_us() - t0) << "us: " << string_to_print << std::endl;
-        }
-    }
-    std::cout << "Print thread finished!" << std::endl;
-    return 0;
-}
-
-int cameraThread() {
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    if (!queuePrint.push("Camera thread thread started!"))
-        std::cerr << "error pushing string from Camera thread thread!" << std::endl;
-    while (true) {
-        if (quitPrint)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        if (!queuePrint.push(std::to_string(get_us() - t0) + "us: Camera thread thread going!!"))
-            std::cerr << "error pushing cycled string from Camera thread thread!" << std::endl;
-    }
-    return 0;
-}
-
-int orbDetectorThread() {
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    if (!queuePrint.push("ORB detector thread started!"))
-        std::cerr << "error pushing string from ORB detector thread!" << std::endl;
-    while (true) {
-        if (quitPrint)
-            break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        if (!queuePrint.push(std::to_string(get_us() - t0) + "us: ORB detector thread thread going!!"))
-            std::cerr << "error pushing cycled string from ORB detector thread thread!" << std::endl;
-    }
-    return 0;
+void exit_cath_init() {
+    struct sigaction sigIntHandler;
+    sigIntHandler.sa_handler = exit_catch;
+    sigemptyset(&sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+    sigaction(SIGINT, &sigIntHandler, nullptr);
 }
 
 int main() {
-    std::cout << "Thread safe app." << std::endl;
+    exit_cath_init();
 
-    std::thread print_thread( printThread );
-    std::thread camera_thread( cameraThread );
-    std::thread orb_detector_thread( orbDetectorThread );
+    std::thread camera_thread( realsenseStreamThread );
+    std::thread orb_detector_thread( ORBdetectorStreamThread );
+    std::thread printer_thread( &Printer::Printer::printLoop, printer );
+    std::thread error_thread( &Printer::Printer::printErrorLoop, printer );
+
+    printer.print("Thread safe app.");
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    if (!queuePrint.push("Idle thread working!"))
-        std::cerr << "error pushing string from idle thread!" << std::endl;
-    std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    if (!printer.print("Idle thread working!"))
+        printer.printError("error pushing string from idle thread!");
 
-    quitPrint = true;
-    if (!queuePrint.push("Fake message to stop blocking thread!"))
-        std::cerr << "error pushing second string from idle thread!" << std::endl;
+
+    while (true) {
+        if (exit_flag) {
+            quitApp = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            printer.stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            break;
+        }
+    }
 
     if (camera_thread.joinable())
         camera_thread.join();
     if (orb_detector_thread.joinable())
         orb_detector_thread.join();
-    if (print_thread.joinable())
-        print_thread.join();
+    if (printer_thread.joinable())
+        printer_thread.join();
+    if (error_thread.joinable())
+        error_thread.join();
 
     return 0;
 }
